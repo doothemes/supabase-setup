@@ -301,6 +301,24 @@ fi
 # 7. Caddy reverse proxy + Let's Encrypt
 # ============================================================================
 if [[ $USE_TLS -eq 1 ]]; then
+    # Detectar si 80/443 ya están ocupados por otro servicio (nginx, apache,
+    # un proxy custom). Caddy no podrá arrancar si están en uso.
+    BUSY_PORTS=()
+    for port in 80 443; do
+        if ss -ltnH "sport = :$port" 2>/dev/null | grep -q LISTEN; then
+            BUSY_PORTS+=("$port")
+        fi
+    done
+    if (( ${#BUSY_PORTS[@]} > 0 )); then
+        warn "Puertos en uso por otro proceso: ${BUSY_PORTS[*]}"
+        warn "Detalle:"
+        ss -ltnp '( sport = :80 or sport = :443 )' 2>&1 | sed 's/^/    /' >&2
+        warn "Caddy no podrá iniciar hasta que liberes esos puertos."
+        warn "Opciones: detener el otro servicio, o reinstalar con --no-tls"
+        warn "y poner Caddy/Nginx existente delante manualmente."
+        confirm "¿Continuar de todas formas?" || die "Cancelado por el usuario."
+    fi
+
     if ! command -v caddy >/dev/null 2>&1; then
         log "Instalando Caddy..."
         curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
@@ -333,8 +351,19 @@ $DOMAIN {
 }
 EOF
 
+    # Validar el Caddyfile antes de intentar arrancar — error temprano y claro.
+    if ! caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1; then
+        die "Caddyfile inválido. Revisa el error arriba."
+    fi
+
     systemctl enable caddy >/dev/null 2>&1 || true
-    systemctl restart caddy
+    if ! systemctl restart caddy; then
+        warn "Caddy no arrancó. Logs del servicio:"
+        journalctl -xeu caddy.service --no-pager -n 40 2>&1 | sed 's/^/    /' >&2 || true
+        warn "Puertos ocupados:"
+        ss -ltnp '( sport = :80 or sport = :443 )' 2>&1 | sed 's/^/    /' >&2 || true
+        die "Caddy falló al iniciar. Causas comunes: puerto 80/443 ocupado por otro servicio (nginx, apache, ...) o DNS no propaga aún."
+    fi
     ok "Caddy activo. Let's Encrypt emitirá el cert al primer request a https://$DOMAIN."
 fi
 
