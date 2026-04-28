@@ -648,27 +648,44 @@ Y `sudo systemctl restart docker`.
 
 ## Desinstalación
 
+El repo incluye `uninstall.sh` que limpia todo lo que `setup.sh` puso. Por defecto detiene el stack, borra los volúmenes Docker (¡pierdes todos los datos!) y elimina `/opt/supabase`. **No** toca Caddy, Docker ni UFW salvo que lo pidas explícitamente.
+
+### Borrar solo Supabase (conservar Caddy y Docker)
+
 ```bash
-cd /opt/supabase
-docker compose down -v             # ¡destructivo! Borra todos los datos
-cd / && sudo rm -rf /opt/supabase
-
-# Opcional — quitar Caddy y Docker:
-sudo systemctl disable --now caddy
-sudo apt remove --purge -y caddy
-sudo rm /etc/apt/sources.list.d/caddy-stable.list
-sudo rm /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-sudo rm -rf /etc/caddy
-
-sudo apt remove --purge -y docker-ce docker-ce-cli containerd.io \
-    docker-buildx-plugin docker-compose-plugin
-sudo rm -rf /var/lib/docker /var/lib/containerd
-sudo rm /etc/apt/sources.list.d/docker.list
-sudo rm /etc/apt/keyrings/docker.gpg
-
-# Opcional — desactivar UFW:
-sudo ufw disable
+curl -fsSL https://raw.githubusercontent.com/doothemes/supabase-setup/main/uninstall.sh -o uninstall.sh
+chmod +x uninstall.sh
+sudo ./uninstall.sh -y
 ```
+
+### Borrar todo lo que el instalador puso
+
+```bash
+sudo ./uninstall.sh --purge-caddy --purge-docker --reset-ufw -y
+```
+
+> `--purge-docker` desinstala Docker entero — afecta a **todos** los contenedores e imágenes del servidor, no solo los de Supabase. El script te pide confirmación extra antes de hacerlo.
+
+### Reinstalar conservando los datos
+
+```bash
+sudo ./uninstall.sh --keep-volumes -y
+sudo ./setup.sh --domain ... --email ... -y
+```
+
+### Flags de uninstall.sh
+
+| Flag | Descripción |
+|------|-------------|
+| `--dir RUTA` | Directorio a desinstalar (default: `/opt/supabase`) |
+| `--keep-volumes` | NO borrar los volúmenes Docker (conserva Postgres + Storage) |
+| `--purge-caddy` | Desinstalar Caddy + borrar `/etc/caddy` y su repo apt |
+| `--purge-docker` | Desinstalar Docker + borrar `/var/lib/docker` (afecta a todo Docker) |
+| `--reset-ufw` | Quitar reglas UFW que añadió `setup.sh` (no desactiva UFW entero) |
+| `-y`, `--yes` | No preguntar confirmación |
+| `-h`, `--help` | Ayuda |
+
+[Ver `uninstall.sh` en el repo](https://github.com/doothemes/supabase-setup/blob/main/uninstall.sh)
 
 ---
 
@@ -694,5 +711,6 @@ sudo ufw disable
 - **Repo:** https://github.com/doothemes/supabase-setup
 - **Issues:** https://github.com/doothemes/supabase-setup/issues
 - **`setup.sh` (raw):** https://raw.githubusercontent.com/doothemes/supabase-setup/main/setup.sh
+- **`uninstall.sh` (raw):** https://raw.githubusercontent.com/doothemes/supabase-setup/main/uninstall.sh
 - **Supabase upstream:** https://github.com/supabase/supabase
 - **Docs Supabase self-hosting:** https://supabase.com/docs/guides/self-hosting/docker
