@@ -111,9 +111,13 @@ fi
 b64url() { openssl base64 -e -A | tr '+/' '-_' | tr -d '='; }
 
 gen_secret() {
-    # genera una cadena alfanumérica de longitud $1
+    # genera una cadena alfanumérica de longitud $1.
+    # Evitamos `tr </dev/urandom | head -c N` porque head cierra el pipe
+    # temprano y tr recibe SIGPIPE → con `set -o pipefail` el script aborta.
     local len="${1:-32}"
-    LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$len"
+    local out
+    out=$(openssl rand -base64 $((len * 2)) | LC_ALL=C tr -dc 'A-Za-z0-9')
+    printf '%s' "${out:0:$len}"
 }
 
 gen_hex() { openssl rand -hex "${1:-32}"; }
