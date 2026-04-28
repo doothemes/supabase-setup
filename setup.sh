@@ -150,12 +150,25 @@ set_env() {
 # 1. Dependencias del sistema
 # ============================================================================
 log "Actualizando apt e instalando dependencias del sistema..."
+
+# Silenciar todos los prompts de apt/dpkg/needrestart (Ubuntu 24.04 lanza un
+# menú TUI por needrestart al instalar paquetes que tocan servicios — sin
+# estas vars el script se queda atorado esperando input).
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq \
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
+export APT_LISTCHANGES_FRONTEND=none
+APT_OPTS=(
+    -y -q
+    -o Dpkg::Options::=--force-confdef
+    -o Dpkg::Options::=--force-confold
+    -o Dpkg::Use-Pty=0
+)
+
+apt-get update -q
+apt-get install "${APT_OPTS[@]}" --no-install-recommends \
     curl ca-certificates gnupg lsb-release git openssl jq ufw \
-    apt-transport-https debian-keyring debian-archive-keyring \
-    dnsutils
+    apt-transport-https dnsutils
 ok "Dependencias instaladas."
 
 # ============================================================================
@@ -169,8 +182,8 @@ if ! command -v docker >/dev/null 2>&1; then
     chmod a+r /etc/apt/keyrings/docker.gpg
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
         > /etc/apt/sources.list.d/docker.list
-    apt-get update -qq
-    apt-get install -y -qq \
+    apt-get update -q
+    apt-get install "${APT_OPTS[@]}" \
         docker-ce docker-ce-cli containerd.io \
         docker-buildx-plugin docker-compose-plugin
     systemctl enable --now docker
@@ -290,8 +303,8 @@ if [[ $USE_TLS -eq 1 ]]; then
             | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
         curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
             > /etc/apt/sources.list.d/caddy-stable.list
-        apt-get update -qq
-        apt-get install -y -qq caddy
+        apt-get update -q
+        apt-get install "${APT_OPTS[@]}" caddy
     fi
 
     log "Configurando /etc/caddy/Caddyfile..."
