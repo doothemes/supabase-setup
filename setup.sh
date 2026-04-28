@@ -279,6 +279,8 @@ SECRET_KEY_BASE=$(gen_hex 32)
 VAULT_ENC_KEY=$(gen_secret 32)
 DASHBOARD_PASSWORD=$(gen_secret 24)
 POOLER_TENANT_ID=$(gen_secret 12 | tr '[:upper:]' '[:lower:]')
+LOGFLARE_PUBLIC_TOKEN=$(gen_secret 32)
+LOGFLARE_PRIVATE_TOKEN=$(gen_secret 32)
 ANON_KEY=$(gen_jwt anon "$JWT_SECRET")
 SERVICE_ROLE_KEY=$(gen_jwt service_role "$JWT_SECRET")
 
@@ -290,18 +292,20 @@ else
     STUDIO_URL="http://${SERVER_IP}:3000"
 fi
 
-set_env POSTGRES_PASSWORD   "$POSTGRES_PASSWORD"   "$ENV_FILE"
-set_env JWT_SECRET          "$JWT_SECRET"          "$ENV_FILE"
-set_env ANON_KEY            "$ANON_KEY"            "$ENV_FILE"
-set_env SERVICE_ROLE_KEY    "$SERVICE_ROLE_KEY"    "$ENV_FILE"
-set_env DASHBOARD_USERNAME  "admin"                "$ENV_FILE"
-set_env DASHBOARD_PASSWORD  "$DASHBOARD_PASSWORD"  "$ENV_FILE"
-set_env SECRET_KEY_BASE     "$SECRET_KEY_BASE"     "$ENV_FILE"
-set_env VAULT_ENC_KEY       "$VAULT_ENC_KEY"       "$ENV_FILE"
-set_env POOLER_TENANT_ID    "$POOLER_TENANT_ID"    "$ENV_FILE"
-set_env API_EXTERNAL_URL    "$PUBLIC_URL"          "$ENV_FILE"
-set_env SUPABASE_PUBLIC_URL "$PUBLIC_URL"          "$ENV_FILE"
-set_env SITE_URL            "$STUDIO_URL"          "$ENV_FILE"
+set_env POSTGRES_PASSWORD              "$POSTGRES_PASSWORD"     "$ENV_FILE"
+set_env JWT_SECRET                     "$JWT_SECRET"            "$ENV_FILE"
+set_env ANON_KEY                       "$ANON_KEY"              "$ENV_FILE"
+set_env SERVICE_ROLE_KEY               "$SERVICE_ROLE_KEY"      "$ENV_FILE"
+set_env DASHBOARD_USERNAME             "admin"                  "$ENV_FILE"
+set_env DASHBOARD_PASSWORD             "$DASHBOARD_PASSWORD"    "$ENV_FILE"
+set_env SECRET_KEY_BASE                "$SECRET_KEY_BASE"       "$ENV_FILE"
+set_env VAULT_ENC_KEY                  "$VAULT_ENC_KEY"         "$ENV_FILE"
+set_env POOLER_TENANT_ID               "$POOLER_TENANT_ID"      "$ENV_FILE"
+set_env LOGFLARE_PUBLIC_ACCESS_TOKEN   "$LOGFLARE_PUBLIC_TOKEN"  "$ENV_FILE"
+set_env LOGFLARE_PRIVATE_ACCESS_TOKEN  "$LOGFLARE_PRIVATE_TOKEN" "$ENV_FILE"
+set_env API_EXTERNAL_URL               "$PUBLIC_URL"            "$ENV_FILE"
+set_env SUPABASE_PUBLIC_URL            "$PUBLIC_URL"            "$ENV_FILE"
+set_env SITE_URL                       "$STUDIO_URL"            "$ENV_FILE"
 
 chmod 600 "$ENV_FILE"
 ok ".env generado (permisos 600)."
@@ -426,11 +430,35 @@ fi
 log "Descargando imágenes (puede tardar varios minutos)..."
 cd "$INSTALL_DIR"
 docker compose pull --quiet
-log "Arrancando servicios..."
-docker compose up -d
-ok "Stack arrancado."
 
-log "Esperando 20s antes de mostrar el estado..."
+# El primer arranque suele fallar por una race condition: el healthcheck de
+# 'analytics' (Logflare) vence antes de que termine sus migraciones contra
+# Postgres, y kong/studio/edge-functions dependen de él. La segunda vez la
+# DB ya está lista y todo arranca limpio. Hacemos hasta 3 intentos.
+log "Arrancando servicios..."
+attempt=1
+max_attempts=3
+while true; do
+    if docker compose up -d; then
+        ok "Stack arrancado (intento $attempt)."
+        break
+    fi
+    if (( attempt >= max_attempts )); then
+        warn "El stack no arrancó tras $max_attempts intentos."
+        warn "Logs de analytics:"
+        docker compose logs --tail=60 analytics 2>&1 | sed 's/^/    /' >&2 || true
+        warn "Logs de db:"
+        docker compose logs --tail=20 db 2>&1 | sed 's/^/    /' >&2 || true
+        warn "Estado actual:"
+        docker compose ps 2>&1 | sed 's/^/    /' >&2 || true
+        die "docker compose up falló. Inspecciona con 'cd $INSTALL_DIR && docker compose logs analytics'."
+    fi
+    warn "Intento $attempt falló (típico al levantar por primera vez — analytics tarda en migrar la DB). Esperando 30s..."
+    sleep 30
+    attempt=$((attempt + 1))
+done
+
+log "Esperando 20s a que los healthchecks se estabilicen..."
 sleep 20
 docker compose ps
 
