@@ -150,6 +150,32 @@ set_env() {
     mv "$tmp" "$file"
 }
 
+wait_for_apt_lock() {
+    # En VPS recién provisionadas, unattended-upgrades suele tener el lock
+    # de dpkg al boot. Esperamos a que se libere (max 5 min) antes de
+    # cualquier apt-get.
+    local timeout=300 waited=0 announced=0
+    while fuser /var/lib/dpkg/lock-frontend  >/dev/null 2>&1 \
+       || fuser /var/lib/dpkg/lock           >/dev/null 2>&1 \
+       || fuser /var/lib/apt/lists/lock      >/dev/null 2>&1 \
+       || pgrep -x unattended-upgr           >/dev/null 2>&1; do
+        if (( announced == 0 )); then
+            warn "apt está bloqueado (probablemente unattended-upgrades). Esperando hasta ${timeout}s..."
+            announced=1
+        fi
+        if (( waited >= timeout )); then
+            warn "Timeout esperando apt. Procesos sospechosos:"
+            ps -eo pid,user,etime,cmd | grep -E 'apt|dpkg|unattended' | grep -v grep >&2 || true
+            die "apt sigue bloqueado tras ${timeout}s. Detén unattended-upgrades manualmente: 'sudo systemctl stop unattended-upgrades && sudo killall unattended-upgr' y reintenta."
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    if (( waited > 0 )); then
+        ok "apt liberado tras ${waited}s de espera."
+    fi
+}
+
 # ============================================================================
 # 1. Dependencias del sistema
 # ============================================================================
@@ -169,7 +195,9 @@ APT_OPTS=(
     -o Dpkg::Use-Pty=0
 )
 
+wait_for_apt_lock
 apt-get update -q
+wait_for_apt_lock
 apt-get install "${APT_OPTS[@]}" --no-install-recommends \
     curl ca-certificates gnupg lsb-release git openssl jq ufw \
     apt-transport-https dnsutils
@@ -186,7 +214,9 @@ if ! command -v docker >/dev/null 2>&1; then
     chmod a+r /etc/apt/keyrings/docker.gpg
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
         > /etc/apt/sources.list.d/docker.list
+    wait_for_apt_lock
     apt-get update -q
+    wait_for_apt_lock
     apt-get install "${APT_OPTS[@]}" \
         docker-ce docker-ce-cli containerd.io \
         docker-buildx-plugin docker-compose-plugin
@@ -325,7 +355,9 @@ if [[ $USE_TLS -eq 1 ]]; then
             | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
         curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
             > /etc/apt/sources.list.d/caddy-stable.list
+        wait_for_apt_lock
         apt-get update -q
+        wait_for_apt_lock
         apt-get install "${APT_OPTS[@]}" caddy
     fi
 
