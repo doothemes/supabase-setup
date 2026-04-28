@@ -33,7 +33,7 @@ ok()   { printf '%s[+]%s %s\n' "$C_GRN" "$C_RST" "$*"; }
 warn() { printf '%s[!]%s %s\n' "$C_YLW" "$C_RST" "$*" >&2; }
 die()  { printf '%s[x]%s %s\n' "$C_RED" "$C_RST" "$*" >&2; exit 1; }
 
-trap 'die "Falló en línea $LINENO. Revisa el log de arriba."' ERR
+trap 'rc=$?; die "Falló en línea $LINENO (exit $rc): $BASH_COMMAND"' ERR
 
 usage() {
     cat <<EOF
