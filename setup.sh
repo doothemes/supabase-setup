@@ -152,24 +152,42 @@ set_env() {
 
 wait_for_apt_lock() {
     # En VPS recién provisionadas, unattended-upgrades suele tener el lock
-    # de dpkg al boot. Esperamos a que se libere (max 5 min) antes de
-    # cualquier apt-get.
-    local timeout=300 waited=0 announced=0
+    # de dpkg al boot. Esperamos a que se libere (max 10 min) antes de
+    # cualquier apt-get, mostrando progreso cada 30s.
+    local timeout=600 waited=0 announced=0
     while fuser /var/lib/dpkg/lock-frontend  >/dev/null 2>&1 \
        || fuser /var/lib/dpkg/lock           >/dev/null 2>&1 \
        || fuser /var/lib/apt/lists/lock      >/dev/null 2>&1 \
        || pgrep -x unattended-upgr           >/dev/null 2>&1; do
         if (( announced == 0 )); then
-            warn "apt está bloqueado (probablemente unattended-upgrades). Esperando hasta ${timeout}s..."
+            warn "apt está bloqueado. Esperando hasta ${timeout}s..."
+            warn "Quién tiene el lock:"
+            ps -eo pid,etime,cmd 2>/dev/null \
+                | grep -E 'apt|dpkg|unattended-upgr' \
+                | grep -v grep \
+                | sed 's/^/    /' >&2 || true
+            warn "Para forzar el desbloqueo desde otra sesión SSH:"
+            warn "    sudo systemctl stop unattended-upgrades"
+            warn "    sudo killall -9 unattended-upgr apt-get dpkg 2>/dev/null"
+            warn "    sudo dpkg --configure -a"
             announced=1
         fi
         if (( waited >= timeout )); then
             warn "Timeout esperando apt. Procesos sospechosos:"
             ps -eo pid,user,etime,cmd | grep -E 'apt|dpkg|unattended' | grep -v grep >&2 || true
-            die "apt sigue bloqueado tras ${timeout}s. Detén unattended-upgrades manualmente: 'sudo systemctl stop unattended-upgrades && sudo killall unattended-upgr' y reintenta."
+            die "apt sigue bloqueado tras ${timeout}s. Detén unattended-upgrades manualmente y reintenta."
         fi
         sleep 5
         waited=$((waited + 5))
+        # Cada 30s mostrar progreso para que no parezca colgado
+        if (( waited > 0 && waited % 30 == 0 )); then
+            local cur
+            cur=$(ps -eo pid,etime,cmd 2>/dev/null \
+                | grep -E 'apt|dpkg|unattended-upgr' \
+                | grep -v grep \
+                | head -1 || true)
+            log "Esperando apt (${waited}s / ${timeout}s)... ${cur:-(lock todavía sostenido)}"
+        fi
     done
     if (( waited > 0 )); then
         ok "apt liberado tras ${waited}s de espera."
